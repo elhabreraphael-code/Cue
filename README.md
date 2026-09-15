@@ -4,6 +4,8 @@ Give your Mac a little character.
 
 Cue is a standalone native macOS menu bar app from Softly Mac. It customizes volume, deliberate brightness, and power-connection feedback with SwiftUI, AppKit, and native Apple materials.
 
+[![Download Cue](https://img.shields.io/badge/Download_Cue-v0.4.0-007AFF?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/elhabreraphael-code/Cue/releases/tag/V0.4.0)
+
 ## Open
 
 Open `../Releases/0.4.0 Alpha/Cue.app`. Closing settings leaves Cue in the menu bar. Choose **Quit Cue** to stop it. Settings from previous alphas migrate automatically; this update preserves existing switches, keyboard response, and shared/per-event appearances.
