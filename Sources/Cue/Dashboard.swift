@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import CueCore
+import UniformTypeIdentifiers
 
 enum CuePage: String, CaseIterable, Identifiable {
     case overview = "Overview", volume = "Volume", brightness = "Brightness", charging = "Charging"
@@ -46,6 +47,16 @@ struct CueDashboard: View {
     @State private var resetConfirmation = false
     @State private var savingLook = false
     @State private var lookName = ""
+    @State private var alternatePreview = false
+    @State private var previewBackdrop = 0
+    @State private var previewVisible = true
+    @State private var motionTask: Task<Void, Never>?
+    @State private var previousAppearance: HUDConfiguration?
+    @State private var previousScope: CueKind?
+    @State private var previousHadOverride = false
+    @State private var lastAppearanceEdit = Date.distantPast
+    @State private var importingLook: LookDocument?
+    @State private var showImport = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     private var isControlPage: Bool { [.volume, .brightness, .charging, .keyboard].contains(model.page) }
     private var isDesignPage: Bool { [.appearance, .position, .motion].contains(model.page) }
@@ -53,11 +64,21 @@ struct CueDashboard: View {
     private var config: HUDConfiguration { isDesignPage ? configuration.wrappedValue : preferences.configuration(for: selectedKind) }
     private var configuration: Binding<HUDConfiguration> {
         Binding(get: { editKind.map { preferences.configuration(for: $0) } ?? preferences.settings.appearance }, set: { value in
+            if Date().timeIntervalSince(lastAppearanceEdit) > 0.45 || previousScope != editKind || previousAppearance == nil {
+                previousAppearance = editKind.map { preferences.configuration(for: $0) } ?? preferences.settings.appearance
+                previousScope = editKind
+                previousHadOverride = editKind.map { preferences.settings.overrides[$0.rawValue] != nil } ?? false
+            }
+            lastAppearanceEdit = Date()
             if let editKind { preferences.settings.overrides[editKind.rawValue] = value }
             else { preferences.settings.appearance = value }
         })
     }
-    private var event: CueEvent { CueEvent(kind: selectedKind, value: previewValue, title: selectedKind == .charging ? "Charging" : selectedKind.title, flag: selectedKind == .charging) }
+    private var event: CueEvent {
+        CueEvent(kind: selectedKind, value: alternatePreview && selectedKind == .volume ? 0 : previewValue,
+            title: selectedKind == .charging ? (alternatePreview ? "On battery" : "Charging") : selectedKind == .volume && alternatePreview ? "Muted" : selectedKind.title,
+            flag: selectedKind == .charging ? !alternatePreview : selectedKind == .volume && alternatePreview)
+    }
     private var appleHUDs: Binding<Bool> { Binding(get: { !preferences.settings.replaceHUD }, set: { preferences.settings.replaceHUD = !$0 }) }
     var body: some View {
         NavigationSplitView {
@@ -74,56 +95,61 @@ struct CueDashboard: View {
                 }.listStyle(.sidebar)
                 VStack(alignment: .leading, spacing: 8) {
                     Label(preferences.active ? "Cue is ready" : "Cue is paused", systemImage: "circle.fill").font(.system(size: 11, weight: .medium)).foregroundStyle(preferences.active ? .green : .secondary)
-                    Text("Small details.\nA little more you.").font(.caption).foregroundStyle(.secondary).lineSpacing(3)
+                    Text("Thoughtfully quiet.\nEntirely yours.").font(.caption).foregroundStyle(.secondary).lineSpacing(3)
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
                 Divider()
-                HStack { Text("V3"); Spacer(); Text("ALPHA").font(.system(size: 9, weight: .semibold)).tracking(1) }.font(.caption).foregroundStyle(.tertiary).padding(17)
+                HStack { Text("V4"); Spacer(); Text("ALPHA").font(.system(size: 9, weight: .semibold)).tracking(1) }.font(.caption).foregroundStyle(.tertiary).padding(17)
             }.navigationSplitViewColumnWidth(min: 180, ideal: 205, max: 230)
         } detail: {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 7) {
-                            Text(model.page == .overview ? "Your Mac. Your Cue." : isControlPage ? "Controls" : isDesignPage ? "Appearance" : "General").font(.system(size: 28, weight: .semibold))
-                            Text(model.page == .overview ? "Just the feedback you want." : isControlPage ? "Make each adjustment feel right." : isDesignPage ? "A familiar look, with your own touch." : "The essentials, taken care of.").font(.system(size: 13)).foregroundStyle(.secondary)
-                        }; Spacer()
-                        Toggle("Cue", isOn: $preferences.settings.enabled).toggleStyle(.switch).labelsHidden().help("Enable Cue")
-                    }
-                    if isDesignPage {
+            VStack(spacing: 0) {
+                if isDesignPage {
+                    VStack(alignment: .leading, spacing: 12) {
+                        pageHeader
                         Picker("Appearance section", selection: $model.page) {
                             Text("Design").tag(CuePage.appearance); Text("Position").tag(CuePage.position); Text("Motion").tag(CuePage.motion)
                         }.pickerStyle(.segmented).labelsHidden()
                         scopePicker
                         preview
-                    }
-                    if isControlPage {
-                        Picker("Control", selection: $model.page) {
-                            Text("Volume").tag(CuePage.volume); Text("Brightness").tag(CuePage.brightness)
-                            Text("Charging").tag(CuePage.charging); Text("Keyboard").tag(CuePage.keyboard)
-                        }.pickerStyle(.segmented).labelsHidden()
-                    }
-                    Group {
-                        switch model.page {
-                        case .overview: overview
-                        case .volume: volumeSettings
-                        case .brightness: brightnessSettings
-                        case .charging: chargingSettings
-                        case .appearance: appearanceSettings
-                        case .position: positionSettings
-                        case .motion: motionSettings
-                        case .keyboard: keyboardSettings
-                        case .general: generalSettings
+                    }.padding(.horizontal, 26).padding(.top, 20).padding(.bottom, 16)
+                    Divider()
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        if !isDesignPage { pageHeader }
+                        if isControlPage {
+                            Picker("Control", selection: $model.page) {
+                                Text("Volume").tag(CuePage.volume); Text("Brightness").tag(CuePage.brightness)
+                                Text("Charging").tag(CuePage.charging); Text("Keyboard").tag(CuePage.keyboard)
+                            }.pickerStyle(.segmented).labelsHidden()
                         }
-                    }
-                    HStack(spacing: 5) {
-                        Image(systemName: "lock.shield"); Text("Made for your Mac. Stays on your Mac.")
-                        Spacer(); Text("Cue V3 Alpha")
-                    }.font(.system(size: 10)).foregroundStyle(.tertiary)
-                }.padding(28).frame(maxWidth: 860, alignment: .leading).frame(maxWidth: .infinity)
-            }.id(model.page).background(Color(nsColor: .windowBackgroundColor))
-            .navigationTitle("Cue")
+                        pageContent
+                        HStack(spacing: 5) {
+                            Image(systemName: "lock.shield"); Text("Made for your Mac. Stays on your Mac.")
+                            Spacer(); Text("Cue V4 Alpha")
+                        }.font(.system(size: 10)).foregroundStyle(.tertiary)
+                    }.padding(26).frame(maxWidth: 860, alignment: .leading).frame(maxWidth: .infinity)
+                }.id(model.page)
+            }.background(Color(nsColor: .windowBackgroundColor)).navigationTitle("Cue")
         }
         .frame(minWidth: 850, minHeight: 650)
+        .onChange(of: model.page) { _, _ in stopMotionPreview() }
+        .onDisappear { stopMotionPreview() }
+        .onChange(of: editKind) { _, _ in alternatePreview = false }
+        .onChange(of: previewKind) { _, _ in alternatePreview = false }
+        .sheet(isPresented: $showImport) {
+            if let look = importingLook {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Import \(look.name)").font(.title2.weight(.semibold))
+                    CueVisual(event: CueEvent(), config: look.configuration, reduceMotion: true)
+                        .scaleEffect(min(0.8, 300 / look.configuration.size.width, 190 / look.configuration.size.height))
+                        .frame(width: 340, height: 200)
+                    Text("Adds this look to your collection. Apply it whenever you like. Your current appearance stays in place.").font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    HStack { Spacer(); Button("Cancel") { showImport = false }.keyboardShortcut(.cancelAction)
+                        Button("Add to My Looks") { preferences.saveLook(name: look.name, configuration: look.configuration); showImport = false }.keyboardShortcut(.defaultAction)
+                    }
+                }.padding(24).frame(width: 360)
+            }
+        }
         .tint(Color(red: 0.20, green: 0.43, blue: 0.96))
         .sheet(isPresented: $savingLook) {
             VStack(alignment: .leading, spacing: 18) {
@@ -143,6 +169,30 @@ struct CueDashboard: View {
             Button("OK") { model.message = "" }
         } message: { Text(model.message) }
     }
+    private var pageHeader: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.page == .overview ? "Your Mac. Your Cue." : isControlPage ? "Controls" : isDesignPage ? "Make it yours." : "General")
+                    .font(.system(size: isDesignPage ? 24 : 28, weight: .semibold))
+                Text(model.page == .overview ? "Just the feedback you want." : isControlPage ? "Make each adjustment feel right." : isDesignPage ? "Choose a shape. Find your feel." : "The essentials, taken care of.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary)
+            }; Spacer()
+            Toggle("Cue", isOn: $preferences.settings.enabled).toggleStyle(.switch).labelsHidden().help("Enable Cue")
+        }
+    }
+    @ViewBuilder private var pageContent: some View {
+        switch model.page {
+        case .overview: overview
+        case .volume: volumeSettings
+        case .brightness: brightnessSettings
+        case .charging: chargingSettings
+        case .appearance: appearanceSettings
+        case .position: positionSettings
+        case .motion: motionSettings
+        case .keyboard: keyboardSettings
+        case .general: generalSettings
+        }
+    }
     private func navigationRow(_ page: CuePage) -> some View {
         let selected = model.page == page || page == .appearance && isDesignPage || page == .volume && isControlPage
         return Button { model.page = page } label: {
@@ -159,7 +209,10 @@ struct CueDashboard: View {
                     ForEach(CueKind.allCases) { Text($0.title).tag(Optional($0)) }
                 }.frame(width: 210)
                 Spacer()
-                Label("Saved automatically", systemImage: "checkmark").font(.caption).foregroundStyle(.secondary)
+                if previousAppearance != nil {
+                    Button { undoAppearance() } label: { Label("Undo", systemImage: "arrow.uturn.backward") }.buttonStyle(.borderless).font(.caption)
+                }
+                Label("Autosaved", systemImage: "checkmark").font(.caption).foregroundStyle(.secondary)
             }
             if let editKind {
                 HStack {
@@ -173,7 +226,7 @@ struct CueDashboard: View {
     private var preview: some View {
         VStack(spacing: 12) {
             ZStack {
-                RoundedRectangle(cornerRadius: 18).fill(LinearGradient(colors: [Color(red: 0.38, green: 0.48, blue: 0.62), Color(red: 0.13, green: 0.19, blue: 0.33), Color(red: 0.27, green: 0.27, blue: 0.44)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                RoundedRectangle(cornerRadius: 20).fill(LinearGradient(colors: previewBackdrop == 1 ? [Color(red: 0.73, green: 0.8, blue: 0.91), Color(red: 0.92, green: 0.91, blue: 0.96)] : previewBackdrop == 2 ? [Color(white: 0.12), Color(white: 0.23)] : [Color(red: 0.22, green: 0.34, blue: 0.65), Color(red: 0.45, green: 0.48, blue: 0.79), Color(red: 0.74, green: 0.56, blue: 0.7)], startPoint: .topLeading, endPoint: .bottomTrailing))
                 GeometryReader { geometry in
                     Ellipse().fill(.white.opacity(0.18)).frame(width: 460, height: 130).blur(radius: 45).rotationEffect(.degrees(-25)).offset(x: -80, y: -40)
                     Ellipse().fill(.blue.opacity(0.2)).frame(width: 440, height: 140).blur(radius: 45).offset(x: 210, y: 220)
@@ -181,36 +234,61 @@ struct CueDashboard: View {
                     let hudSize = CGSize(width: config.size.width * factor, height: config.size.height * factor)
                     let frame = hudFrame(in: CGRect(x: 18, y: 39, width: geometry.size.width - 36, height: geometry.size.height - 78), size: hudSize, anchor: config.position.anchor, margin: 7, offsetX: config.offsetX * 0.15, offsetY: config.offsetY * 0.15)
                     CueVisual(event: event, config: config, reduceMotion: preferences.settings.reduceMotion || systemReduceMotion)
-                        .scaleEffect(factor).frame(width: hudSize.width, height: hudSize.height)
+                        .scaleEffect(factor * (previewVisible || preferences.settings.reduceMotion || systemReduceMotion ? 1 : 0.975))
+                        .opacity(previewVisible ? 1 : 0)
+                        .offset(y: previewVisible || preferences.settings.reduceMotion || systemReduceMotion ? 0 : 8)
+                        .animation(config.animation(reduceMotion: preferences.settings.reduceMotion || systemReduceMotion), value: previewVisible)
+                        .frame(width: hudSize.width, height: hudSize.height)
                         .position(x: frame.midX, y: geometry.size.height - frame.midY)
                 }.clipped()
                 VStack {
                     HStack {
                         Label("PREVIEW", systemImage: "viewfinder").font(.system(size: 9, weight: .semibold)).tracking(1.3)
-                        Spacer(); Text("\(config.style.rawValue) · \(config.material.rawValue)").font(.system(size: 10, weight: .medium))
+                        Spacer()
+                        ForEach(0..<3) { index in
+                            Button { previewBackdrop = index } label: {
+                                Circle().fill(index == 0 ? Color.indigo : index == 1 ? Color.white : Color.black)
+                                    .frame(width: 13, height: 13).overlay(Circle().strokeBorder(.white.opacity(previewBackdrop == index ? 1 : 0.3), lineWidth: 1.5))
+                            }.buttonStyle(.plain).accessibilityLabel(["Color preview background", "Light preview background", "Dark preview background"][index])
+                        }
                     }.foregroundStyle(.white.opacity(0.66))
                     Spacer()
                     HStack {
                         Text("\(config.position.rawValue) · \(Int(config.scale * 100))%").font(.system(size: 10)).foregroundStyle(.white.opacity(0.5))
                         Spacer()
-                        Button { model.preview(selectedKind, value: previewValue, shared: isDesignPage && editKind == nil) } label: { Label("Play on desktop", systemImage: "play.fill").font(.system(size: 11, weight: .medium)) }
+                        Button { model.preview(selectedKind, value: previewValue, shared: isDesignPage && editKind == nil, alternate: alternatePreview) } label: { Label("Play on desktop", systemImage: "play.fill").font(.system(size: 11, weight: .medium)) }
                             .buttonStyle(.plain).foregroundStyle(.white.opacity(0.9)).accessibilityIdentifier("desktop-preview")
                     }
                 }.padding(17)
-            }.frame(height: 250).clipShape(RoundedRectangle(cornerRadius: 18))
+            }.frame(height: isDesignPage ? 180 : 235).clipShape(RoundedRectangle(cornerRadius: 18))
             HStack(spacing: 16) {
                 if model.page.kind == nil && (!isDesignPage || editKind == nil) {
                     Picker("Preview", selection: $previewKind) { ForEach(CueKind.allCases) { Text($0.title).tag($0) } }.labelsHidden().frame(width: 125)
                 } else { Text(selectedKind.title).font(.caption).foregroundStyle(.secondary).frame(width: 75, alignment: .leading) }
-                Slider(value: $previewValue, in: 0...1).accessibilityLabel("Preview level")
-                Text("\(Int((previewValue * 100).rounded()))%").font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 35, alignment: .trailing)
+                Slider(value: $previewValue, in: 0...1).accessibilityLabel("Preview level").onChange(of: previewValue) { _, _ in alternatePreview = false }
+                Text(event.percentage).font(.caption.monospacedDigit()).foregroundStyle(.secondary).frame(width: 35, alignment: .trailing)
+            }
+            HStack {
+                if selectedKind != .brightness {
+                    Toggle(selectedKind == .volume ? "Preview muted" : "Preview unplugged", isOn: $alternatePreview).toggleStyle(.checkbox).font(.caption)
+                }
+                Spacer()
+                Button { playMotionPreview() } label: { Label(motionTask == nil ? "Try motion" : "Replay motion", systemImage: "play.circle") }.buttonStyle(.borderless).font(.caption)
             }
         }
     }
     private var overview: some View {
         VStack(alignment: .leading, spacing: 18) {
-            appleHUDCard
-            sectionTitle("CUE ANIMATIONS")
+            preview
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("A small detail. A better everyday.").font(.system(size: 16, weight: .semibold))
+                    Text("Volume, brightness, and power — with your own touch.").font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Make it yours") { model.page = .appearance }.buttonStyle(.borderedProminent).controlSize(.large)
+            }
+            sectionTitle("YOUR EVERYDAY CUES")
             card {
                 settingsToggle("Volume", detail: "Feedback for your sound.", symbol: "speaker.wave.2.fill", color: .blue, binding: $preferences.settings.volume)
                 Divider().padding(.leading, 50)
@@ -230,7 +308,7 @@ struct CueDashboard: View {
             if let date = preferences.settings.pauseUntil, preferences.temporarilyPaused {
                 Text("Paused until \(date.formatted(date: .omitted, time: .shortened)). Your settings stay in place.").font(.caption).foregroundStyle(.secondary)
             }
-            DisclosureGroup("Try a preview") { preview.padding(.top, 12) }
+            appleHUDCard
             Label("Your choices are remembered when Cue reopens.", systemImage: "checkmark.circle").font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -257,8 +335,13 @@ struct CueDashboard: View {
             card {
                 settingsToggle("Volume animations", detail: "Follow your selected sound output.", symbol: "speaker.wave.2.fill", color: .blue, binding: $preferences.settings.volume)
                 Divider(); liveControl(.volume, label: monitor.muted ? "Output volume · Muted" : "Output volume", value: monitor.volume)
+                Divider(); statusRow("Sound output", value: monitor.outputName)
             }
             appearanceLink(.volume)
+            card {
+                settingsToggle("Output connection cue", detail: "See when your Mac switches speakers or headphones.", symbol: "hifispeaker.fill", color: .purple, binding: $preferences.settings.showOutputChanges)
+                Divider(); simpleToggle("Use output name as the label", binding: $preferences.settings.showOutputName)
+            }
             card {
                 sliderRow("Volume step", value: $preferences.settings.volumeStep, range: 0.5...25, step: 0.25, label: String(format: "%.2g%%", preferences.settings.volumeStep))
                 Divider()
@@ -310,10 +393,23 @@ struct CueDashboard: View {
     }
     private var appearanceSettings: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack { sectionTitle("YOUR LOOK"); Spacer(); presetMenu }
+            HStack { sectionTitle("CHOOSE YOUR SHAPE"); Spacer(); presetMenu }
+            StyleGallery(configuration: configuration, reduceMotion: preferences.settings.reduceMotion || systemReduceMotion)
+            if !preferences.settings.savedLooks.isEmpty {
+                VStack(alignment: .leading, spacing: 9) {
+                    sectionTitle("MY LOOKS")
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack {
+                            ForEach(preferences.settings.savedLooks) { look in
+                                Button { configuration.wrappedValue = look.configuration } label: { Label(look.name, systemImage: look.configuration.style.symbol) }
+                                    .contextMenu { Button("Remove look", role: .destructive) { preferences.settings.savedLooks.removeAll { $0.id == look.id } } }
+                            }
+                        }.padding(.vertical, 2)
+                    }
+                }
+            }
             card {
-                pickerRow("Design", selection: configuration.style, values: CueStyle.allCases)
-                Divider(); pickerRow("Material", selection: configuration.material, values: CueMaterial.allCases)
+                pickerRow("Material", selection: configuration.material, values: CueMaterial.allCases)
                 Divider(); pickerRow("Appearance", selection: configuration.theme, values: CueTheme.allCases)
                 Divider(); sliderRow("Size", value: configuration.scale, range: 0.5...2, step: 0.05, label: "\(Int((config.scale * 100).rounded()))%")
                 Divider()
@@ -356,6 +452,9 @@ struct CueDashboard: View {
     private var presetMenu: some View {
         Menu("Looks") {
             Button("Save this look…") { lookName = config.style.rawValue; savingLook = true }
+            Button("Export this look…") { exportLook() }
+            Button("Import a look…") { importLook() }
+            Button("Reset this look") { configuration.wrappedValue = HUDConfiguration() }
             if !preferences.settings.savedLooks.isEmpty {
                 Section("Saved looks") {
                     ForEach(preferences.settings.savedLooks) { look in
@@ -369,6 +468,7 @@ struct CueDashboard: View {
                 }
             }
             Divider()
+            Button("Silky Slim") { var value = MotionPreset.silky.apply(to: HUDConfiguration()); value.style = .slim; value.showLabel = false; configuration.wrappedValue = value }
             Button("Apple Glass") { var value = HUDConfiguration(); value.material = .liquid; configuration.wrappedValue = value }
             Button("iPhone · Left") { applyPhonePreset(.left) }
             Button("iPhone · Right") { applyPhonePreset(.right) }
@@ -421,6 +521,8 @@ struct CueDashboard: View {
     }
     private var motionSettings: some View {
         VStack(alignment: .leading, spacing: 18) {
+            sectionTitle("PICK YOUR FEEL")
+            MotionGallery(configuration: configuration)
             card {
                 pickerRow("Transition", selection: configuration.motion, values: CueMotion.allCases)
                 Divider(); sliderRow("Stay on screen", value: configuration.duration, range: 0.5...8, step: 0.1, label: String(format: "%.1f s", config.duration))
@@ -468,24 +570,25 @@ struct CueDashboard: View {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack { Text("Cue").font(.title.weight(.semibold)); Text("ALPHA").font(.system(size: 9, weight: .bold)).tracking(1).padding(.horizontal, 7).padding(.vertical, 4).background(.blue.opacity(0.1), in: Capsule()).foregroundStyle(.blue) }
                     Text("Give your Mac a little character.").foregroundStyle(.secondary)
-                    Text("V3 Alpha · Version 0.3.0 (3) · By Softly Mac").font(.caption).foregroundStyle(.tertiary)
+                    Text("V4 Alpha · Version 0.4.0 (4) · By Softly Mac").font(.caption).foregroundStyle(.tertiary)
                 }
             }.padding(.vertical, 12)
             card {
                 settingsToggle("Open at login", detail: "Have Cue ready when you start your Mac.", symbol: "power", color: .gray, binding: Binding(get: { model.loginEnabled }, set: { model.setLogin($0) }))
                 Divider(); settingsToggle("Reduce motion", detail: "Keep transitions gentle.", symbol: "figure.stand", color: .blue, binding: $preferences.settings.reduceMotion)
             }
+            quietAppsCard
             card {
                 VStack(alignment: .leading, spacing: 10) {
                     Label("Your Mac always gets its controls back", systemImage: "checkmark.shield").font(.system(size: 13, weight: .semibold))
-                    Text("Cue only intercepts media keys while it runs. Pausing, quitting, or a crash releases them. If the running app is moved or deleted, Cue detects that and quits. It doesn’t install a background helper or permanently disable any macOS component.")
+                    Text("Cue only intercepts media keys while it runs. Pausing, quitting, or a crash releases them. Moving or deleting Cue’s bundle releases it. Moving a containing folder is detected on activation or before the next media key. It doesn’t install a background helper or permanently disable any macOS component.")
                     Button("Restore Apple HUDs & Quit") { model.restoreAppleHUDsAndQuit() }
                 }.font(.caption).lineSpacing(3).padding(16)
             }
             DisclosureGroup("About this alpha") {
               card {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("An early little beginning", systemImage: "sparkles").font(.system(size: 13, weight: .semibold))
+                    Label("The finishing touches", systemImage: "sparkles").font(.system(size: 13, weight: .semibold))
                     Text("Cue runs locally, without accounts or analytics. Keyboard replacement is experimental and depends on your keyboard and macOS version. Brightness uses an optional system interface and supports the built-in display only.")
                     Text("Native Liquid Glass requires macOS 26 or later. This alpha is locally signed for testing.")
                 }.font(.caption).foregroundStyle(.secondary).lineSpacing(3).padding(16)
@@ -494,6 +597,84 @@ struct CueDashboard: View {
             Label("Quiet in the background", systemImage: "leaf").font(.system(size: 12, weight: .medium))
             note("Cue uses system notifications while idle. Brightness readings refresh only while their settings are visible; there are no repeating background timers.")
             HStack { Button("Restore all appearance defaults…") { resetConfirmation = true }; Spacer(); Button("Quit Cue") { NSApp.terminate(nil) } }.font(.caption)
+        }
+    }
+    private var quietAppsCard: some View {
+        card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Quiet in these apps", systemImage: "moon.zzz").font(.system(size: 13, weight: .semibold))
+                    Spacer(); Button("Add app…") { addQuietApp() }
+                }
+                Text("Hide Cue’s HUDs and chime while a chosen app is in front. Your volume and brightness keys keep working with your saved response.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if preferences.settings.quietApps.isEmpty {
+                    Text("No apps added").font(.caption).foregroundStyle(.tertiary)
+                }
+                ForEach(preferences.settings.quietApps) { app in
+                    HStack {
+                        Image(systemName: "app").foregroundStyle(.secondary)
+                        Text(app.name).font(.callout); Spacer()
+                        Button { preferences.settings.quietApps.removeAll { $0.id == app.id } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless).accessibilityLabel("Remove \(app.name) from quiet apps")
+                    }
+                }
+            }.padding(16)
+        }
+    }
+    private func addQuietApp() {
+        let panel = NSOpenPanel(); panel.allowedContentTypes = [.applicationBundle]
+        panel.allowsMultipleSelection = true; panel.canChooseDirectories = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications"); panel.prompt = "Add Apps"
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier, id != Preferences.domain,
+                  !preferences.settings.quietApps.contains(where: { $0.id == id }) else { continue }
+            preferences.settings.quietApps.append(QuietApp(id: id, name: url.deletingPathExtension().lastPathComponent))
+        }
+    }
+    private func undoAppearance() {
+        guard let previousAppearance else { return }
+        if let scope = previousScope {
+            if previousHadOverride { preferences.settings.overrides[scope.rawValue] = previousAppearance }
+            else { preferences.settings.overrides.removeValue(forKey: scope.rawValue) }
+        }
+        else { preferences.settings.appearance = previousAppearance }
+        self.previousAppearance = nil
+    }
+    private func exportLook() {
+        let panel = NSSavePanel(); panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "\(config.style.rawValue).cue-look.json"
+        panel.title = "Export Cue Look"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try LookDocument(name: config.style.rawValue, configuration: config).encoded().write(to: url, options: .atomic) }
+        catch { model.message = error.localizedDescription }
+    }
+    private func importLook() {
+        let panel = NSOpenPanel(); panel.allowedContentTypes = [.json]; panel.allowsMultipleSelection = false
+        panel.title = "Import Cue Look"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let attributes = try url.resourceValues(forKeys: [.fileSizeKey])
+            guard (attributes.fileSize ?? 0) <= 256_000 else { throw LookDocument.LookError.tooLarge }
+            importingLook = try LookDocument.decode(Data(contentsOf: url)); showImport = true
+        } catch { model.message = error.localizedDescription }
+    }
+    private func stopMotionPreview() {
+        motionTask?.cancel(); motionTask = nil; previewVisible = true
+    }
+    private func playMotionPreview() {
+        motionTask?.cancel()
+        motionTask = Task { @MainActor in
+            previewVisible = false
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+                alternatePreview = false; previewValue = 0.25; previewVisible = true
+                try await Task.sleep(for: .milliseconds(550))
+                for value in [0.4, 0.55, 0.7, 0.85, 0.65] {
+                    try Task.checkCancellation(); previewValue = value
+                    try await Task.sleep(for: .milliseconds(180))
+                }
+                motionTask = nil
+            } catch { }
         }
     }
     private func liveControl(_ kind: CueKind, label: String, value: Double?) -> some View {

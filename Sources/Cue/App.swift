@@ -4,7 +4,7 @@ import ServiceManagement
 import CueCore
 
 final class CueModel: ObservableObject {
-    let preferences = Preferences()
+    let preferences: Preferences
     let monitor = SystemMonitor()
     let keyboard = MediaKeyController()
     lazy var overlay = OverlayController(preferences: preferences)
@@ -12,41 +12,50 @@ final class CueModel: ObservableObject {
     @Published var windowVisible = false
     @Published var message = ""
     @Published var loginEnabled = SMAppService.mainApp.status == .enabled
+    private let diagnostics: Bool
     private var activationObserver: NSObjectProtocol?
     private var deactivationObserver: NSObjectProtocol?
     private var resumeWork: DispatchWorkItem?
     private var scheduledResume: Date?
+    private var foregroundObserver: NSObjectProtocol?
+    @Published var quietAppName: String?
     private var pendingBrightness: DispatchWorkItem?
     private var installationGuard: InstallationGuard?
-    init() {
+    init(preferences: Preferences = Preferences(), diagnostics: Bool = false) {
+        self.preferences = preferences; self.diagnostics = diagnostics
         preferences.changed = { [weak self] in self?.apply() }
         monitor.event = { [weak self] kind, value, title, flag in
-            guard let self, self.preferences.accepts(kind) else { return }
+            guard let self, self.accepts(kind) else { return }
             if kind == .charging && !flag && !self.preferences.settings.showDisconnect { return }
-            self.overlay.show(CueEvent(kind: kind, value: value, title: title, flag: flag))
+            self.overlay.show(CueEvent(kind: kind, value: value, title: kind == .volume && self.preferences.settings.showOutputName && !flag ? self.monitor.outputName : title, flag: flag))
             if kind == .charging, flag, self.preferences.settings.chargingSound { NSSound(named: "Glass")?.play() }
         }
+        monitor.outputChanged = { [weak self] name, level, muted in
+            guard let self, self.preferences.settings.showOutputChanges, self.accepts(.volume) else { return }
+            self.overlay.show(CueEvent(kind: .volume, value: muted ? 0 : (level ?? 0), title: name, flag: muted, symbolOverride: "hifispeaker.fill", showsLevel: level != nil))
+        }
+        foregroundObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in self?.updateQuietApp() }
         keyboard.handle = { [weak self] key, fine, held in self?.handleKey(key, fine: fine, held: held) ?? false }
         activationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.apply() }
         deactivationObserver = NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.updateReadoutActivity() }
-        installationGuard = InstallationGuard { [weak self] in
+        if !diagnostics { installationGuard = InstallationGuard { [weak self] in
             self?.keyboard.stop(); self?.overlay.closeImmediately()
             if SMAppService.mainApp.status == .enabled { try? SMAppService.mainApp.unregister() }
             NSApp.terminate(nil)
-        }
+        }}
         apply()
     }
     private func handleKey(_ key: MediaKey, fine: Bool, held: Double) -> Bool {
-        guard preferences.active else { return false }
+        guard installationGuard?.verifyNow() != false, preferences.active else { return false }
         let settings = preferences.settings
         if !settings.replaceHUD {
-            if key.kind == .brightness && preferences.accepts(.brightness) {
+            if key.kind == .brightness && accepts(.brightness) {
                 // Deliberate media-key input is the trigger, never display polling.
                 if pendingBrightness == nil {
                     let work = DispatchWorkItem { [weak self] in
                         guard let self else { return }
                         self.pendingBrightness = nil
-                        guard self.preferences.accepts(.brightness) else { return }
+                        guard self.accepts(.brightness) else { return }
                         self.monitor.sampleBrightness(origin: .keyboard)
                     }
                     pendingBrightness = work
@@ -76,12 +85,23 @@ final class CueModel: ObservableObject {
             if monitor.audio.muted { _ = monitor.audio.setMuted(false) }
         }
         monitor.sampleAudio()
-        if preferences.accepts(.volume) { overlay.show(CueEvent(kind: .volume, value: monitor.muted ? 0 : (monitor.volume ?? 0), title: monitor.muted ? "Muted" : "Volume", flag: monitor.muted)) }
+        if accepts(.volume) { overlay.show(CueEvent(kind: .volume, value: monitor.muted ? 0 : (monitor.volume ?? 0), title: monitor.muted ? "Muted" : settings.showOutputName ? monitor.outputName : "Volume", flag: monitor.muted)) }
         return true
     }
+    func accepts(_ kind: CueKind) -> Bool {
+        preferences.accepts(kind) && !preferences.isQuiet(in: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+    }
+    private func updateQuietApp() {
+        let app = NSWorkspace.shared.frontmostApplication
+        let name = preferences.isQuiet(in: app?.bundleIdentifier) ? (app?.localizedName ?? "This app") : nil
+        if quietAppName != name { quietAppName = name }
+        if name != nil { overlay.closeImmediately() }
+    }
     func apply() {
+        guard installationGuard?.verifyNow() != false else { return }
+        updateQuietApp()
         keyboard.trusted = AXIsProcessTrusted()
-        if preferences.active && keyboard.trusted { keyboard.start() } else { keyboard.stop() }
+        if !diagnostics && preferences.active && keyboard.trusted { keyboard.start() } else { keyboard.stop() }
         updateReadoutActivity()
         scheduleResume()
         if !preferences.active { pendingBrightness?.cancel(); pendingBrightness = nil; overlay.closeImmediately() }
@@ -102,9 +122,11 @@ final class CueModel: ObservableObject {
         resumeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, date.timeIntervalSinceNow), execute: work)
     }
-    func preview(_ kind: CueKind, value: Double? = nil, shared: Bool = false) {
+    func preview(_ kind: CueKind, value: Double? = nil, shared: Bool = false, alternate: Bool = false) {
         let number = value ?? (kind == .volume ? monitor.volume : kind == .brightness ? monitor.brightness : monitor.power?.percent) ?? 0.65
-        overlay.show(CueEvent(kind: kind, value: number, title: kind == .charging ? "Charging" : kind.title, flag: kind == .charging), shared: shared)
+        overlay.show(CueEvent(kind: kind, value: alternate && kind == .volume ? 0 : number,
+            title: kind == .charging ? (alternate ? "On battery" : "Charging") : kind == .volume && alternate ? "Muted" : kind.title,
+            flag: kind == .charging ? !alternate : kind == .volume && alternate), shared: shared)
     }
     func setLevel(_ kind: CueKind, value: Double) {
         if kind == .brightness {
@@ -131,6 +153,7 @@ final class CueModel: ObservableObject {
     }
     deinit {
         resumeWork?.cancel(); pendingBrightness?.cancel()
+        if let foregroundObserver { NSWorkspace.shared.notificationCenter.removeObserver(foregroundObserver) }
         if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver) }
         if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
     }
@@ -153,6 +176,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard suite.hasPrefix("com.softlymac.cue.diagnostics.") else { exit(2) }
             let saved = Preferences(defaults: UserDefaults(suiteName: suite)!).settings
             exit(!saved.enabled && !saved.volume && !saved.brightness && !saved.charging && saved.replaceHUD && !saved.savedLooks.isEmpty ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--visual-check") {
+            let success = runVisualChecks()
+            exit(success ? 0 : 1)
         }
         if CommandLine.arguments.contains("--integration-check") {
             let success = runIntegrationChecks()
@@ -195,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem.button?.toolTip = "Cue — your Mac, with a little character"
         statusItem.menu = menu
         let root = CueDashboard(model: model, preferences: model.preferences, monitor: model.monitor, keyboard: model.keyboard)
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 740), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1080, height: 820), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.title = "Cue"; window.titlebarAppearsTransparent = true
         window.delegate = self; window.setFrameAutosaveName("CueSettingsWindow")
         window.toolbar = NSToolbar(identifier: "CueToolbar"); window.toolbarStyle = .unified
@@ -207,12 +234,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appItem = NSMenuItem(); let applicationMenu = NSMenu()
         applicationMenu.addItem(withTitle: "About Cue", action: #selector(showAbout), keyEquivalent: "")
         applicationMenu.addItem(.separator())
+        applicationMenu.addItem(withTitle: "Cue Settings…", action: #selector(showWindow), keyEquivalent: ",")
+        applicationMenu.addItem(.separator())
         applicationMenu.addItem(withTitle: "Quit Cue", action: #selector(quit), keyEquivalent: "q")
         for item in applicationMenu.items { item.target = self }
         appItem.submenu = applicationMenu; appMenu.addItem(appItem)
         let edit = NSMenuItem(); let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        edit.submenu = editMenu; appMenu.addItem(edit); NSApp.mainMenu = appMenu
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.submenu = editMenu; appMenu.addItem(edit)
+        let viewItem = NSMenuItem(); let viewMenu = NSMenu(title: "View")
+        for (title, action, key) in [("Overview", #selector(showOverview), "1"), ("Appearance", #selector(showAppearance), "2"), ("Controls", #selector(showControls), "3"), ("General", #selector(showAbout), "4")] {
+            let item = viewMenu.addItem(withTitle: title, action: action, keyEquivalent: key); item.target = self
+        }
+        viewItem.submenu = viewMenu; appMenu.addItem(viewItem); NSApp.mainMenu = appMenu
         let loginLaunch = NSAppleEventManager.shared().currentAppleEvent?.paramDescriptor(forKeyword: keyAEPropData)?.paramDescriptor(forKeyword: keyAELaunchedAsLogInItem)?.booleanValue ?? false
         if !CommandLine.arguments.contains("--background") && !loginLaunch { showWindow() }
         if CommandLine.arguments.contains("--smoke-test") {
@@ -231,6 +271,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowDidChangeOcclusionState(_ notification: Notification) { model.setWindowVisible(window.occlusionState.contains(.visible)) }
     @objc func pauseBriefly() { model.pause(minutes: 15) }
     @objc func pauseHour() { model.pause(minutes: 60) }
+    @objc func showOverview() { model.page = .overview; showWindow() }
+    @objc func showAppearance() { model.page = .appearance; showWindow() }
+    @objc func showControls() { model.page = .volume; showWindow() }
     @objc func showAbout() { model.page = .general; showWindow() }
     @objc func toggle() { if model.preferences.temporarilyPaused { model.resume() } else { model.preferences.enabled.toggle() } }
     @objc func toggleAppleHUDs() { model.preferences.settings.replaceHUD.toggle() }

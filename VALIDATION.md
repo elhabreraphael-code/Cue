@@ -1,25 +1,26 @@
-# Cue V3 Alpha · validation
+# Cue V4 Alpha · validation
 
-September 15, 2026. Apple silicon, macOS 27.0 (26A428), Swift 6.2 command line tools.
+September 15, 2026 · Apple silicon · macOS 27.0 (26A428) · Swift 6.2
 
-## Verified
+## Passed
 
-- Optimized build with no compiler warnings.
-- **56 core checks** for power transitions, silent brightness telemetry, key response, ceilings, fine adjustments, and screen placement.
-- **48 integration checks** for migration, all hidden-HUD switches, named looks, real cross-process preference reload, missing fields, unknown enum recovery, damaged-data backup recovery, temporary pause persistence/expiry, brightness timer creation/removal, actual read-only brightness samples, extreme HUD dimensions, and event-driven removal detection (including a containing folder being moved).
-- A launch failure discovered during UI verification was corrected: the app's own preference domain uses `UserDefaults.standard`; opening that same domain as an extra named suite can return nil on this macOS build. Diagnostic suites remain explicitly isolated. The corrected app passed the normal packaged smoke launch and exit.
-- Pre-upgrade preference snapshot compared to migrated settings: all existing keys and values preserved, including `replaceHUD = true` (Apple HUDs off), existing event switches, and the full appearance configuration. User changes during subsequent exploration remain user-controlled.
-- Native accessibility/screenshot checks: four sidebar destinations, clean Overview with Apple HUDs off remembered, Design/Position/Motion organization, saved-state explanation when keyboard access is missing, appearance controls, and collapsed detailed sections.
-- Local signature, plist, and ZIP validation during packaging.
+- Optimized packaged build with no compiler warnings; local code signature verified.
+- **56 core checks** for event policies, silent automatic brightness, keyboard response, volume ceilings, and display placement.
+- **76 integration checks** in the final packaged executable: earlier-alpha migration; switches and saved looks across process launches; quiet-app policy and persistence; output-feedback preferences; motion preset scope; appearance-only export round-trip and invalid/oversized import rejection; actual overlay entrance, dismissal interruption, stale callback cancellation, automatic exit, event switching, and invalid level handling; brightness readout lifecycle; all nine layouts at extreme sizes; removal detection.
+- **15 layout renders** covering six settings destinations in light and dark, both HUD contact sheets, and compact-window Appearance. Bitmap captures omit parts of native Liquid Glass compositor effects; they are layout diagnostics, not exact glass screenshots.
+- Live native UI inspected: glass rendering, nine-design gallery, Slim selection and Undo, motion presets, keyboard navigation, fixed preview while scrolling, advanced controls, and saved Apple-HUD-off status.
+- Final packaged smoke launch/preview/exit succeeded, followed by normal launch.
+- Existing V3 preference values compared before/after migration and preserved. New optional features default off. UI design-test changes were undone.
 
-## Energy work
+## Launch correction
 
-V2 had repeating brightness, permission, and installation checks. V3 has no repeating app timer when idle in the background. Its only repeating timer is a two-second brightness readout refresh, created only while that page is visible and the app is active and invalidated when it is not. Permission refresh uses app/menu events. Installation monitoring watches rename/delete events on the executable, bundle, and ancestors. Audio and power use system notifications. Duplicate values and unchanged panel frames do not request redundant updates.
+Live launch exposed a blocking parent-directory open in the inherited installation monitor. V4 watches only Cue-owned bundle files. Relocating a containing folder is checked on activation, menu opening, and before consuming a media key. This preserves event-driven idle behavior without opening protected ancestor directories at startup. A fresh packaged launch after this change succeeded.
 
-This verifies reduced idle work; it is not a measured battery-runtime improvement or a promise of zero CPU/GPU use. Existing settings, system controls, and animation quality are not reduced for power savings.
+## Remaining release gates
 
-## Limits
+- Accessibility permission was not granted during this run. Physical media-key replacement, key holds, and custom steps need an authorized keyboard test with this signed copy; ad-hoc rebuilding can invalidate earlier approval.
+- Physical charger/output switching, other monitors and hardware, login launch, and other macOS versions still need device checks. Quiet-app policy is tested; a full presentation-app workflow remains a manual check.
+- Native Liquid Glass requires macOS 26+. Built-in brightness uses an optional private system interface. Control Center can retain its own feedback.
+- This is an ad-hoc signed alpha, not a notarized public release. Animation behavior is tuned and inspected; no universal frame-rate or battery-runtime guarantee is made.
 
-Keyboard access was still ungranted during inspection. The saved Apple-HUD-off preference is independent of macOS Accessibility permission, so physical media-key suppression and custom steps still require the user's authorized test. Ad-hoc rebuilt binaries may need their macOS permission re-enabled. Control Center may retain its own feedback.
-
-Manual charger operations, additional hardware/output devices, login launch, other macOS versions, and exhaustive visual combinations remain physical-device checks. Automatic brightness suppression and pause/persistence logic were tested without changing hardware levels or granting permissions. Temporary diagnostic data was removed from the test suite and workspace check directory.
+Diagnostic logs and layout renders stay in Source/.build. No diagnostic path grants permissions or changes hardware levels.

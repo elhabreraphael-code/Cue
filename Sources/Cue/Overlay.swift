@@ -7,7 +7,10 @@ struct CueEvent: Equatable {
     var value: Double = 0.65
     var title = "Volume"
     var flag = false
+    var symbolOverride: String? = nil
+    var showsLevel = true
     var symbol: String {
+        if let symbolOverride { return symbolOverride }
         switch kind {
         case .volume: return flag || value == 0 ? "speaker.slash.fill" : value < 0.34 ? "speaker.wave.1.fill" : value < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
         case .brightness: return "sun.max.fill"
@@ -57,7 +60,7 @@ struct CueVisual: View {
     private var ink: Color { config.color }
     private var radius: Double {
         switch config.style {
-        case .compact, .island: return min(config.size.height / 2, config.cornerRadius + 12)
+        case .compact, .island, .slim: return min(config.size.height / 2, config.cornerRadius + 12)
         case .iphone: return min(config.size.width / 2, config.cornerRadius)
         default: return config.cornerRadius
         }
@@ -68,13 +71,19 @@ struct CueVisual: View {
             .modifier(HUDSurface(config: config, radius: radius))
             .shadow(color: .black.opacity(config.shadow), radius: 14, y: 5)
             .opacity(config.opacity)
-            .animation(reduceMotion ? nil : .smooth(duration: config.smoothing), value: event.value)
+            .animation(reduceMotion ? nil : .interpolatingSpring(duration: config.smoothing, bounce: 0), value: event.value)
             .environment(\.colorScheme, config.theme.scheme ?? systemScheme)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(event.title), \(event.percentage)")
+            .accessibilityLabel(event.showsLevel ? "\(event.title), \(event.percentage)" : event.title)
     }
     @ViewBuilder private var content: some View {
-        switch config.style {
+        if !event.showsLevel {
+            VStack(spacing: 10) {
+                if config.showIcon { icon.font(.system(size: 22, weight: .medium)) }
+                Text(event.title).font(.system(size: 12, weight: .medium)).lineLimit(2).multilineTextAlignment(.center)
+            }.padding(12)
+        } else { switch config.style {
+        case .slim: slim
         case .glass: glass
         case .compact: compact
         case .iphone: iphone
@@ -83,7 +92,7 @@ struct CueVisual: View {
         case .classic: classic
         case .wave: wave
         case .tile: tile
-        }
+        }}
     }
     @ViewBuilder private var icon: some View {
         if reduceMotion { Image(systemName: event.symbol).foregroundStyle(ink) }
@@ -94,6 +103,16 @@ struct CueVisual: View {
             .contentTransition(.numericText(value: event.value * 100))
     }
     private var title: some View { Text(event.title).font(.system(size: 13, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8) }
+    private var slim: some View {
+        HStack(spacing: 12) {
+            if config.showIcon { icon.font(.system(size: 16, weight: .medium)).frame(width: 22) }
+            VStack(alignment: .leading, spacing: 5) {
+                if config.showLabel { Text(event.title).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).lineLimit(1) }
+                levelBar(height: 4)
+            }
+            if config.showPercentage { percentage.foregroundStyle(.secondary).frame(width: 36, alignment: .trailing) }
+        }.padding(.horizontal, 17)
+    }
     private var glass: some View {
         HStack(spacing: 15) {
             if config.showIcon {
@@ -147,7 +166,7 @@ struct CueVisual: View {
         VStack(spacing: 11) {
             ZStack {
                 Circle().stroke(.primary.opacity(0.09), lineWidth: 5)
-                Circle().trim(from: 0, to: max(0.001, event.value)).stroke(ink.gradient, style: StrokeStyle(lineWidth: 5, lineCap: .round)).rotationEffect(.degrees(-90))
+                Circle().trim(from: 0, to: max(0.001, event.value)).stroke(ink, style: StrokeStyle(lineWidth: 5, lineCap: .round)).rotationEffect(.degrees(-90))
                 if config.showIcon { icon.font(.system(size: 28, weight: .medium)) }
             }.frame(width: min(config.size.width - 50, config.size.height - 88), height: min(config.size.width - 50, config.size.height - 88))
             if config.showLabel { title.foregroundStyle(.secondary) }
@@ -200,7 +219,7 @@ struct CueVisual: View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
                 Capsule().fill(.primary.opacity(0.10))
-                Capsule().fill(ink.gradient).frame(width: max(0, geometry.size.width * min(1, max(0, event.value))))
+                Capsule().fill(ink).frame(width: max(0, geometry.size.width * min(1, max(0, event.value))))
             }
         }.frame(height: height)
     }
@@ -214,11 +233,11 @@ struct OverlayRoot: View {
     private var travel: CGSize {
         guard !reduceMotion, state.config.motion != .fade else { return .zero }
         let anchor = state.config.position.anchor
-        return CGSize(width: (anchor.x - 0.5) * 30, height: (0.5 - anchor.y) * 24)
+        return CGSize(width: (anchor.x - 0.5) * 18, height: (0.5 - anchor.y) * 18)
     }
     var body: some View {
         CueVisual(event: state.event, config: state.config, reduceMotion: reduceMotion)
-            .scaleEffect(state.effectiveScale * (state.visible || reduceMotion || state.config.motion == .fade ? 1 : 0.94))
+            .scaleEffect(state.effectiveScale * (state.visible || reduceMotion || state.config.motion == .fade ? 1 : 0.975))
             .opacity(state.visible ? 1 : 0)
             .offset(x: state.visible ? 0 : travel.width, y: state.visible ? 0 : travel.height)
             .animation(state.config.animation(reduceMotion: reduceMotion), value: state.visible)
@@ -238,6 +257,12 @@ final class OverlayController {
     private var entrance: DispatchWorkItem?
     private var targetScreen: NSScreen?
     private var previewShared = false
+    private var generation = 0
+    private var screenObserver: NSObjectProtocol?
+    private var sleepObserver: NSObjectProtocol?
+    var isPresented: Bool { panel.isVisible }
+    var isAnimatingIn: Bool { state.visible }
+    var currentEvent: CueEvent { state.event }
     init(preferences: Preferences) {
         self.preferences = preferences
         panel = CuePanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -246,23 +271,42 @@ final class OverlayController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         panel.isReleasedWhenClosed = false
         panel.contentView = NSHostingView(rootView: OverlayRoot(state: state, preferences: preferences))
+        screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.panel.isVisible else { return }
+            self.targetScreen = self.selectScreen(self.state.config.screen); self.layout()
+        }
+        sleepObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in self?.closeImmediately() }
     }
     func show(_ event: CueEvent, shared: Bool = false) {
         dismiss?.cancel(); hide?.cancel(); entrance?.cancel()
-        let wasVisible = state.visible
-        if state.event != event { state.event = event }
+        generation += 1
+        let token = generation
+        let wasVisible = panel.isVisible
+        let changedKind = state.event.kind != event.kind
+        var safeEvent = event
+        safeEvent.value = event.value.isFinite ? min(1, max(0, event.value)) : 0
+        if state.event != safeEvent {
+            // A fresh or different event starts at its real level, without
+            // animating from the previous event's unrelated brightness/volume.
+            var transaction = Transaction()
+            transaction.disablesAnimations = !wasVisible || state.event.kind != safeEvent.kind
+            withTransaction(transaction) { state.event = safeEvent }
+        }
         previewShared = shared
-        let configuration = shared ? preferences.settings.appearance : preferences.configuration(for: event.kind)
+        let configuration = (shared ? preferences.settings.appearance : preferences.configuration(for: event.kind)).sanitized()
+        let changedScreen = state.config.screen != configuration.screen
         if state.config != configuration { state.config = configuration }
-        if !wasVisible { targetScreen = selectScreen(state.config.screen) }
+        if !wasVisible || changedKind || changedScreen { targetScreen = selectScreen(state.config.screen) }
         layout()
         panel.orderFrontRegardless()
         if !wasVisible {
             panel.displayIfNeeded()
-            let work = DispatchWorkItem { [weak self] in self?.state.visible = true }
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.generation == token else { return }; self.state.visible = true
+            }
             entrance = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.016, execute: work)
-        }
+        } else { state.visible = true }
         scheduleDismiss()
     }
     func refreshAppearance() {
@@ -299,13 +343,21 @@ final class OverlayController {
         DispatchQueue.main.asyncAfter(deadline: .now() + state.config.duration, execute: work)
     }
     func close() {
-        dismiss?.cancel(); hide?.cancel(); entrance?.cancel(); state.visible = false
-        let work = DispatchWorkItem { [weak self] in self?.panel.orderOut(nil) }
+        dismiss?.cancel(); hide?.cancel(); entrance?.cancel(); generation += 1; state.visible = false
+        let token = generation
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == token else { return }; self.panel.orderOut(nil)
+        }
         hide = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.65 / state.config.speed, execute: work)
     }
+    deinit {
+        dismiss?.cancel(); hide?.cancel(); entrance?.cancel()
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        if let sleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(sleepObserver) }
+    }
     func closeImmediately() {
         dismiss?.cancel(); hide?.cancel(); entrance?.cancel()
-        state.visible = false; panel.orderOut(nil)
+        generation += 1; state.visible = false; panel.orderOut(nil)
     }
 }

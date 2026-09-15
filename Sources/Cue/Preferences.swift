@@ -3,10 +3,12 @@ import CueCore
 
 enum CueStyle: String, CaseIterable, Identifiable, Codable {
     case glass = "Glass", compact = "Compact", iphone = "iPhone", island = "Island"
+    case slim = "Slim"
     case orbit = "Orbit", classic = "Classic", wave = "Wave", tile = "Tile"
     var id: String { rawValue }
     var symbol: String {
         switch self {
+        case .slim: return "slider.horizontal.3"
         case .glass: return "rectangle.roundedtop"
         case .compact: return "capsule"
         case .iphone: return "iphone"
@@ -19,6 +21,7 @@ enum CueStyle: String, CaseIterable, Identifiable, Codable {
     }
     var description: String {
         switch self {
+        case .slim: return "A slimmer kind of familiar."
         case .glass: return "Light, layered, familiar."
         case .compact: return "Just the essentials."
         case .iphone: return "A touch of iPhone."
@@ -86,7 +89,7 @@ struct HUDConfiguration: Codable, Equatable {
     var screen: CueScreen = .pointer
     var scale = 1.0, width = 1.0, height = 1.0
     var edgeMargin = 32.0, offsetX = 0.0, offsetY = 0.0
-    var duration = 1.8, speed = 1.0, bounce = 0.18, smoothing = 0.22
+    var duration = 1.6, speed = 1.0, bounce = 0.08, smoothing = 0.24
     var cornerRadius = 28.0, tintAmount = 0.0, opacity = 1.0, shadow = 0.22
     var showLabel = true, showPercentage = true, showIcon = true
     var motion: CueMotion = .fluid
@@ -128,6 +131,7 @@ struct HUDConfiguration: Codable, Equatable {
     var size: CGSize {
         let base: CGSize
         switch style {
+        case .slim: base = CGSize(width: max(230, 300 * width), height: max(42, 48 * height))
         case .glass: base = CGSize(width: max(256, 316 * width), height: max(84, 98 * height))
         case .compact: base = CGSize(width: max(195, 265 * width), height: max(48, 56 * height))
         case .iphone: base = CGSize(width: max(52, 66 * width), height: max(144, 218 * height))
@@ -142,7 +146,7 @@ struct HUDConfiguration: Codable, Equatable {
     func animation(reduceMotion: Bool) -> Animation {
         if reduceMotion || motion == .fade { return .easeOut(duration: 0.18 / speed) }
         switch motion {
-        case .fluid: return .smooth(duration: 0.34 / speed, extraBounce: bounce * 0.12)
+        case .fluid: return .interpolatingSpring(duration: 0.42 / speed, bounce: bounce * 0.15)
         case .spring: return .spring(response: 0.4 / speed, dampingFraction: 1 - bounce * 0.45)
         case .glide: return .easeInOut(duration: 0.36 / speed)
         case .fade: return .easeOut(duration: 0.18 / speed)
@@ -172,9 +176,12 @@ struct CueSettings: Codable, Equatable {
     var showDisconnect = true
     var savedLooks: [SavedLook] = []
     var pauseUntil: Date? = nil
+    var quietApps: [QuietApp] = []
+    var showOutputChanges = false
+    var showOutputName = false
 
     init() {}
-    private enum CodingKeys: String, CodingKey { case enabled, volume, brightness, charging, replaceHUD, chargingSound, reduceMotion, appearance, overrides, volumeStep, brightnessStep, acceleration, accelerationDelay, accelerationRamp, maximumVolume, showDisconnect, savedLooks, pauseUntil }
+    private enum CodingKeys: String, CodingKey { case enabled, volume, brightness, charging, replaceHUD, chargingSound, reduceMotion, appearance, overrides, volumeStep, brightnessStep, acceleration, accelerationDelay, accelerationRamp, maximumVolume, showDisconnect, savedLooks, pauseUntil, quietApps, showOutputChanges, showOutputName }
     init(from decoder: Decoder) throws {
         self.init()
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -196,8 +203,16 @@ struct CueSettings: Codable, Equatable {
         showDisconnect = values.value(for: .showDisconnect, default: showDisconnect)
         savedLooks = values.value(for: .savedLooks, default: savedLooks)
         pauseUntil = values.value(for: .pauseUntil, default: pauseUntil)
+        quietApps = values.value(for: .quietApps, default: quietApps)
+        showOutputChanges = values.value(for: .showOutputChanges, default: showOutputChanges)
+        showOutputName = values.value(for: .showOutputName, default: showOutputName)
     }
 }
+struct QuietApp: Codable, Equatable, Identifiable {
+    var id: String
+    var name: String
+}
+
 struct SavedLook: Codable, Equatable, Identifiable {
     var id = UUID()
     var name: String
@@ -257,6 +272,9 @@ final class Preferences: ObservableObject {
     var enabled: Bool { get { settings.enabled } set { settings.enabled = newValue } }
     var temporarilyPaused: Bool { settings.pauseUntil.map { $0 > Date() } ?? false }
     var active: Bool { enabled && !temporarilyPaused }
+    func isQuiet(in bundleID: String?) -> Bool {
+        guard let bundleID else { return false }; return settings.quietApps.contains { $0.id == bundleID }
+    }
     func accepts(_ kind: CueKind) -> Bool { active && (kind == .volume ? settings.volume : kind == .brightness ? settings.brightness : settings.charging) }
     func configuration(for kind: CueKind) -> HUDConfiguration { settings.overrides[kind.rawValue] ?? settings.appearance }
     func resetAppearance() { settings.appearance = HUDConfiguration(); settings.overrides = [:] }

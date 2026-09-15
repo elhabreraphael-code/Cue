@@ -40,7 +40,7 @@ func runIntegrationChecks() -> Bool {
     let toggles = Preferences(defaults: defaults)
     check(!toggles.enabled && !toggles.settings.volume && !toggles.settings.brightness && !toggles.settings.charging && toggles.settings.replaceHUD, "All hidden-HUD choices survive reload")
     check(toggles.settings.savedLooks.first?.configuration == phone, "Saved look survives reload intact")
-    let probe = Process(); probe.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+    let probe = Process(); probe.executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
     probe.arguments = ["--settings-probe-suite", suite]
     let pipe = Pipe(); probe.standardOutput = pipe; probe.standardError = pipe
     do {
@@ -61,6 +61,53 @@ func runIntegrationChecks() -> Bool {
     paused.settings.pauseUntil = Date().addingTimeInterval(-1)
     let resumed = Preferences(defaults: defaults)
     check(resumed.active && resumed.settings.pauseUntil == nil, "Expired pause resumes without leaving Cue disabled")
+    // V4 migration, portable looks, quiet policy, and preset scope.
+    check(!migratedPartial.settings.showOutputChanges && !migratedPartial.settings.showOutputName && migratedPartial.settings.quietApps.isEmpty, "V3 migration leaves new optional features off")
+    resumed.settings.quietApps = [QuietApp(id: "com.example.Presentation", name: "Presentation")]
+    resumed.settings.showOutputChanges = true; resumed.settings.showOutputName = true
+    let newFeatures = Preferences(defaults: defaults)
+    check(newFeatures.settings.showOutputChanges && newFeatures.settings.showOutputName, "Output feedback choices survive reload")
+    check(newFeatures.isQuiet(in: "com.example.Presentation"), "Chosen frontmost app is quiet")
+    check(!newFeatures.isQuiet(in: "com.example.Other") && !newFeatures.isQuiet(in: nil), "Other and missing frontmost apps remain eligible")
+    check(newFeatures.active && newFeatures.accepts(.charging), "Quiet list does not overwrite enable or event settings")
+    for preset in MotionPreset.allCases {
+        let next = preset.apply(to: phone)
+        check(next.position == phone.position && next.style == phone.style && next.accent == phone.accent && next.scale == phone.scale, "Motion preset preserves design and placement: \(preset.rawValue)")
+        check(preset.matches(next), "Motion preset is recognized: \(preset.rawValue)")
+    }
+    do {
+        var exportConfig = phone; exportConfig.style = .slim
+        let encoded = try LookDocument(name: "Portable look", configuration: exportConfig).encoded()
+        let decoded = try LookDocument.decode(encoded)
+        check(decoded.configuration == exportConfig && decoded.name == "Portable look", "Portable look round-trips all appearance values")
+        let json = String(decoding: encoded, as: UTF8.self)
+        check(!json.contains("replaceHUD") && !json.contains("quietApps") && !json.contains("volumeStep"), "Export contains no keyboard behavior or quiet app list")
+        check((try? LookDocument.decode(Data("{}".utf8))) == nil, "Unrelated JSON is rejected")
+        check((try? LookDocument.decode(Data(json.replacingOccurrences(of: "com.softlymac.cue.look", with: "another.format").utf8))) == nil, "Foreign look format is rejected")
+        check((try? LookDocument.decode(Data(json.replacingOccurrences(of: "\"version\" : 1", with: "\"version\" : 99").utf8))) == nil, "Future incompatible look is rejected")
+        check((try? LookDocument.decode(Data(repeating: 65, count: 256_001))) == nil, "Oversized look file is rejected")
+    } catch { check(false, "Look round-trip: \(error)") }
+    // Exercise actual scheduled panel lifecycle, including updates that arrive
+    // while its exit animation is still running.
+    resumed.settings.appearance.duration = 0.5; resumed.settings.appearance.speed = 2
+    let overlay = OverlayController(preferences: resumed)
+    overlay.show(CueEvent(value: 0.25))
+    RunLoop.main.run(until: Date().addingTimeInterval(0.04))
+    check(overlay.isPresented && overlay.isAnimatingIn, "HUD enters after first show")
+    overlay.close()
+    overlay.show(CueEvent(value: 0.8))
+    RunLoop.main.run(until: Date().addingTimeInterval(0.35))
+    check(overlay.isPresented && overlay.isAnimatingIn && overlay.currentEvent.value == 0.8, "New level reverses dismissal and stale hide cannot remove it")
+    overlay.show(CueEvent(kind: .brightness, value: 0.4, title: "Brightness"))
+    check(overlay.currentEvent.kind == .brightness && overlay.currentEvent.value == 0.4, "Switching event kinds immediately uses the correct level")
+    overlay.show(CueEvent(value: .nan))
+    check(overlay.currentEvent.value == 0, "Non-finite HUD payload is bounded")
+    overlay.closeImmediately()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.04))
+    check(!overlay.isPresented && !overlay.isAnimatingIn, "Immediate close cancels every pending entrance")
+    overlay.show(CueEvent(value: 0.5))
+    RunLoop.main.run(until: Date().addingTimeInterval(0.95))
+    check(!overlay.isPresented, "HUD automatically leaves after hold and exit")
     let monitor = SystemMonitor()
     check(!monitor.readoutTimerActive, "No brightness polling timer at startup")
     monitor.setReadoutActive(true)
@@ -116,7 +163,7 @@ func runIntegrationChecks() -> Bool {
             let parentGuard = InstallationGuard(bundleURL: nested) { parentMoveDetected = true }
             try FileManager.default.moveItem(at: parentRoot, to: root.appendingPathComponent("MovedContainer"))
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-            check(parentMoveDetected, "Moving a containing folder is detected without polling")
+            check(!parentGuard.verifyNow() && parentMoveDetected, "Containing-folder relocation is detected before the next control interaction")
             withExtendedLifetime(parentGuard) {}
             try FileManager.default.removeItem(at: root)
         } catch { check(false, "Removal guard test: \(error.localizedDescription)") }

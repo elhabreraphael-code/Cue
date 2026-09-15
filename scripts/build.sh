@@ -1,7 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 CUE_SOURCE="${0:A:h:h}"
-CUE_RELEASE="$CUE_SOURCE/../Releases/0.3.0 Alpha"
+CUE_RELEASE="$CUE_SOURCE/../Releases/0.4.0 Alpha"
 CUE_BUNDLE="$CUE_RELEASE/Cue.app"
 cd "$CUE_SOURCE"
 swift build -c release
@@ -13,5 +13,5 @@ cp Info.plist "$CUE_BUNDLE/Contents/Info.plist"
 cp Resources/Cue.icns "$CUE_BUNDLE/Contents/Resources/Cue.icns"
 codesign --force --sign - "$CUE_BUNDLE"
 codesign --verify --deep --strict "$CUE_BUNDLE"
-ditto -c -k --sequesterRsrc --keepParent "$CUE_BUNDLE" "$CUE_RELEASE/Cue-0.3.0-alpha-mac.zip"
+ditto -c -k --sequesterRsrc --keepParent "$CUE_BUNDLE" "$CUE_RELEASE/Cue-0.4.0-alpha-mac.zip"
 print "Built $CUE_BUNDLE"

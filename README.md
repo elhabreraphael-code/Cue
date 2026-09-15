@@ -1,32 +1,34 @@
-# Cue · V3 Alpha (0.3.0)
+# Cue · V4 Alpha (0.4.0)
 
 Give your Mac a little character.
 
 Cue is a standalone native macOS menu bar app from Softly Mac. It customizes volume, deliberate brightness, and power-connection feedback with SwiftUI, AppKit, and native Apple materials.
 
-[![Download for macOS](https://img.shields.io/badge/Download_for_macOS-0.3.0_Alpha-111111?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/elhabreraphael-code/Cue/releases/download/V0.3.0/Cue-0.3.0-alpha-mac.zip)
-
 ## Open
 
-Open `../Releases/0.3.0 Alpha/Cue.app`. Closing settings leaves Cue in the menu bar. Choose **Quit Cue** to stop it. Settings from previous alphas migrate automatically; this update preserves existing switches, keyboard response, and shared/per-event appearances.
+Open `../Releases/0.4.0 Alpha/Cue.app`. Closing settings leaves Cue in the menu bar. Choose **Quit Cue** to stop it. Settings from previous alphas migrate automatically; this update preserves existing switches, keyboard response, and shared/per-event appearances.
 
-## V3: simpler, remembered, quieter
+## V4: a more personal, more considered Cue
 
-- Four sidebar sections: Overview, Appearance, Controls, General. Appearance contains Design/Position/Motion; Controls contains Volume/Brightness/Charging/Keyboard. Detailed adjustments live in disclosure sections.
-- All HUD switches persist, including Apple HUD visibility and disabled Cue events. Critical switches are flushed when changed, and settings flush on window close or quit. Missing fields or an unknown enum no longer discard the entire configuration; a last-valid backup recovers damaged primary data.
-- The app explicitly shows when an off preference is saved but Accessibility access is missing. An ad-hoc alpha rebuild can invalidate macOS's permission for the previous binary; that is independent of the saved choice.
-- **Looks → Save this look** stores a named design, material, color, size, position, and motion. Saved looks apply to the currently selected event scope. Built-in presets remain in the same menu.
-- **Pause…** on Overview or the menu bar pauses for 15 minutes or an hour. The deadline survives relaunch and does not overwrite the permanent enable switch. Resume now ends a temporary pause early.
-- A new copy asks an older running Cue copy to quit before loading settings, preventing simultaneous versions from handling the same keys or writing stale settings.
-- Native untinted Liquid Glass uses Apple's unmodified material. Glass icons and shadows are more restrained; entrances are shorter and less bouncy. All existing numeric appearance choices are preserved.
-- Idle Cue has **no repeating app timers**. Brightness readout polling exists only while the brightness controls are visible and the app is active, at two seconds with tolerance. Permission status refreshes on activation or menu opening. App removal and ancestor-folder moves use file-system notifications. Audio and charging remain event-driven.
-- No reduced animation quality or changed keyboard increments are imposed to save power. Duplicate HUD values and unchanged window frames avoid redundant updates. This is a reduction in idle work, not a measured battery-life percentage.
+- **Appearance studio.** A visual gallery of nine designs replaces the design dropdown. The live preview stays visible while you scroll through Design, Position, and Motion. Core choices are upfront; detailed controls remain in disclosure sections.
+- **Slim.** A new low-profile horizontal HUD with a thin continuous level track, optional label, icon, and percentage. The Silky Slim preset pairs it with restrained spring motion.
+- **Pick your feel.** Silky, Responsive, Playful, and Quiet presets adjust transition and level response together, preserving your design, color, size, and position. All underlying motion controls remain available.
+- **Continuous transitions.** Level changes use a spring with no bounce. New presses reverse an in-progress dismissal without resetting the entrance. A new event starts at its own value; stale hide callbacks cannot remove a freshly shown HUD. Screen changes revalidate placement, and screen sleep dismisses overlays.
+- **A better preview.** Color, light, and dark backgrounds; mute and unplugged states; and a cancellable motion demonstration. Preview controls never change actual volume or brightness. Play on desktop uses the selected event or shared look.
+- **Your own looks.** Save and apply named looks. Export/import an appearance-only JSON file, with validation and an import review. Import adds to My Looks without replacing your current design. Reset this look affects only the chosen scope; Undo restores the previous edit (continuous slider changes are grouped).
+- **Quiet in chosen apps.** Add apps in General to suppress Cue HUDs and its charging chime while those apps are in front. Custom key response stays active. This does not suppress Apple's own HUDs if those are enabled.
+- **Sound-output awareness.** Optional feedback when the default output changes, plus an option to use its name as the volume label. Both start off for existing users. Outputs without software volume show their name without an invented percentage.
+- **Native conveniences.** Standard text editing commands, Settings with Command–comma, and Command–1…4 for sidebar destinations.
+- **Launch reliability.** Removal monitoring no longer opens protected ancestor folders on the main thread. It watches Cue-owned bundle files and checks for containing-folder relocation on activation, menu opening, and before media-key handling.
 
-## Customization retained from V2
+Your previous appearance, event switches, keyboard response, saved looks, and Apple HUD choice are preserved. New default motion values apply only to new/reset looks. V3 source is archived alongside the previous releases.
+
+## Customization
+
 
 
 - **Automatic brightness is silent.** Display telemetry only updates the reading. Brightness cues are explicitly triggered by brightness keys or Cue’s actual brightness slider. Keyboard detection requires Accessibility access. Control Center brightness changes also stay silent because macOS does not expose reliable origin metadata for arbitrary brightness changes.
-- **Eight designs:** Glass, Compact, iPhone, Island, Orbit, Classic, Wave, and Tile.
+- **Nine designs:** Glass, Compact, iPhone, Island, Slim, Orbit, Classic, Wave, and Tile.
 - **Apple materials:** native Liquid Glass and Clear Glass on macOS 26+, with frosted fallback on macOS 14–15; Frosted and Solid are also selectable.
 - **Colors:** 12 presets including adaptive Monochrome, plus a native color picker for any custom color. Appearance can follow macOS or use Light or Dark. Glass tint, opacity, and shadow are adjustable.
 - **Size and details:** 50–200% HUD scale, independent width/height, corner radius, icon, percentage, and label controls. Labels are intentionally absent from the iPhone and Compact layouts.
@@ -44,7 +46,7 @@ Open `../Releases/0.3.0 Alpha/Cue.app`. Closing settings leaves Cue in the menu 
 - **Off:** with Accessibility access, Cue handles supported volume, mute, and brightness keys and consumes the corresponding events. Enabled Cue overlays show instead. Turning off a Cue event can therefore give silent key control while Apple HUDs are also off.
 - **Access missing or unsupported control:** keys continue to macOS; the settings page clearly reports that Apple HUDs remain active.
 - **Paused, quit, or crashed:** the event tap is released, and normal macOS behavior resumes. Cue does not alter system daemons or persistently disable Apple’s HUD service.
-- **Moved or deleted while running:** file-system watches on the bundle, executable, and containing folders stop Cue if its app bundle or executable disappears. The General page also has **Restore Apple HUDs & Quit**, which turns replacement off and unregisters login launch when possible.
+- **Moved or deleted while running:** file-system watches stop Cue when its bundle or executable is moved or deleted. Containing-folder relocation is checked on activation, menu opening, and before the next media key. The General page also has **Restore Apple HUDs & Quit**, which turns replacement off and unregisters login launch when possible.
 
 To enable key handling, click **Allow Keyboard Access…**, allow this Cue app under System Settings → Privacy & Security → Accessibility, and return to Cue. Detection refreshes automatically. This alpha is ad-hoc signed; rebuilding or switching app copies may require permission to be granted again.
 
@@ -69,15 +71,17 @@ Requires Apple Command Line Tools with a Swift 6.2/macOS 26-capable SDK (the app
 ```sh
 swift run CueChecks
 ./scripts/build.sh
-"../Releases/0.3.0 Alpha/Cue.app/Contents/MacOS/Cue" --integration-check --check-directory "$PWD/.build"
+"../Releases/0.4.0 Alpha/Cue.app/Contents/MacOS/Cue" --integration-check --check-directory "$PWD/.build"
+"../Releases/0.4.0 Alpha/Cue.app/Contents/MacOS/Cue" --visual-check --check-directory "$PWD/.build"
 ```
 
-Quit the running Cue before rebuilding its packaged app. The build script generates `Cue.app` and `Cue-0.3.0-alpha-mac.zip` under Releases. `--smoke-test` is also available to show a preview, report hardware readings, and exit.
+Quit the running Cue before rebuilding its packaged app. The build script generates `Cue.app` and `Cue-0.4.0-alpha-mac.zip` under Releases. `--smoke-test` is also available to show a preview, report hardware readings, and exit.
 
 - `CueCore`: event policy, level baselines, custom key response, screen placement.
 - `Cue`: original SwiftUI/AppKit interface, materials, system integration, preferences, and removal guard.
 - `CueChecks`: deterministic core checks.
-- `IntegrationChecks.swift`: opt-in checks for migration, persistent event overrides, real read-only brightness sampling, extreme layouts, and a disposable bundle removal callback. No hardware values are changed.
+- `IntegrationChecks.swift`: opt-in checks for migration, persistent settings, portable looks, quiet-app policy, real overlay timing, read-only brightness sampling, extreme layouts, and disposable removal detection. No hardware values are changed.
+- `VisualChecks.swift`: isolated settings and synthetic data, with keyboard interception disabled. Bitmap renders are useful for layout; native Liquid Glass must also be inspected live because bitmap caching omits parts of its compositor rendering.
 
 See `VALIDATION.md` for evidence and remaining physical-device checks.
 

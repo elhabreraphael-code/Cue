@@ -42,6 +42,13 @@ final class AudioControl {
         var value = value
         return AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<T>.size), &value) == noErr
     }
+    var deviceName: String {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var name: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &name) == noErr else { return "Sound output" }
+        return name?.takeRetainedValue() as String? ?? "Sound output"
+    }
     var volume: Double? {
         if let value: Float32 = read(kAudioDevicePropertyVolumeScalar, initial: Float32(0)) { return Double(value) }
         let channels: [Float32] = [1, 2].compactMap { read(kAudioDevicePropertyVolumeScalar, element: $0, initial: Float32(0)) }
@@ -98,6 +105,8 @@ final class SystemMonitor: ObservableObject {
     let display = BrightnessControl()
     @Published var volume: Double?
     @Published var muted = false
+    @Published var outputName = "Sound output"
+    var outputChanged: ((String, Double?, Bool) -> Void)?
     @Published var brightness: Double?
     @Published var power: PowerSnapshot?
     var event: ((CueKind, Double, String, Bool) -> Void)?
@@ -130,11 +139,16 @@ final class SystemMonitor: ObservableObject {
         timer?.tolerance = 0.8
     }
     func sampleAudio() {
-        if lastDevice != audio.device { volumeTracker.reset(); lastMute = nil; lastDevice = audio.device }
+        let switched = lastDevice != 0 && audio.device != 0 && lastDevice != audio.device
+        if lastDevice != audio.device {
+            volumeTracker.reset(); lastMute = nil; lastDevice = audio.device
+            let name = audio.deviceName; if outputName != name { outputName = name }
+        }
         let level = audio.volume; let mute = audio.muted
         let changed = volumeTracker.update(level)
         let muteChanged = lastMute.map { $0 != mute } ?? false
         if volume != level { volume = level }; if muted != mute { muted = mute }; lastMute = mute
+        if switched { outputChanged?(outputName, level, mute) }
         if changed || muteChanged, let level { event?(.volume, mute ? 0 : level, mute ? "Muted" : "Volume", mute) }
     }
     func sampleBrightness(origin: BrightnessOrigin = .system) {
