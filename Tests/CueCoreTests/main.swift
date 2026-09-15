@@ -1,0 +1,68 @@
+import Foundation
+import CoreGraphics
+import CueCore
+
+var count = 0
+func check(_ condition: @autoclosure () -> Bool, _ name: String) {
+    guard condition() else { fputs("FAIL: \(name)\n", stderr); exit(1) }
+    count += 1
+    print("PASS: \(name)")
+}
+let battery = PowerSnapshot(percent: 0.62, connected: false, charging: false)
+let plugged = PowerSnapshot(percent: 0.62, connected: true, charging: true)
+let held = PowerSnapshot(percent: 0.8, connected: true, charging: false)
+let full = PowerSnapshot(percent: 1, connected: true, charging: false)
+check(!battery.shouldAnnounce(after: nil), "No unplug animation at launch")
+check(!plugged.shouldAnnounce(after: nil), "No charging animation at launch")
+check(plugged.shouldAnnounce(after: battery), "Connecting power announces")
+check(battery.shouldAnnounce(after: plugged), "Disconnecting power announces")
+check(!held.shouldAnnounce(after: plugged), "Charge hold does not announce another connection")
+check(!full.shouldAnnounce(after: held), "Battery percentage updates stay quiet")
+check(held.label == "Power connected", "Optimized charging is not mislabeled as charging")
+check(full.label == "Fully charged", "Full charge label")
+check(battery.label == "On battery", "Disconnected label")
+check(PowerSnapshot(percent: 2, connected: true, charging: false).percent == 1, "Clamp capacity overflow")
+var levels = LevelTracker()
+check(!levels.update(0.5), "First volume sample is silent")
+check(!levels.update(0.502), "Ignore insignificant jitter")
+check(levels.update(0.6), "Announce volume change")
+check(!levels.update(nil), "Unavailable device is silent")
+check(!levels.update(0.3), "Reconnected device establishes baseline")
+check(!levels.update(.nan), "Ignore invalid readings")
+check(!levels.update(0.3), "Recover from invalid reading")
+levels.reset()
+check(!levels.update(0.7), "Wake and device switch establish baseline")
+check(MediaKey.volumeUp.adjusted(0.98) == 1, "Clamp volume upper boundary")
+check(MediaKey.brightnessDown.adjusted(0.02) == 0, "Clamp brightness lower boundary")
+check(MediaKey.volumeDown.adjusted(0.5) == 0.4375, "Standard media key increment")
+check(MediaKey.brightnessUp.adjusted(0.5, fine: true) == 0.515625, "Fine brightness increment")
+check(MediaKey(rawValue: 16) == nil, "Do not consume unrelated media keys")
+check(MediaKey.mute.kind == .volume, "Mute belongs to volume toggle")
+print("\(count) checks passed.")
+
+check(!shouldShowBrightness(origin: .system), "Automatic brightness never requests a cue")
+check(shouldShowBrightness(origin: .keyboard), "Brightness keys request a cue")
+check(shouldShowBrightness(origin: .cueControl), "Cue brightness control requests a cue")
+let response = KeyResponse(step: 0.02, acceleration: 3, delay: 0.4, ramp: 1.2, ceiling: 0.8)
+check(response.increment(held: 0, fine: false) == 0.02, "First key press uses base step")
+check(response.increment(held: 0.3, fine: false) == 0.02, "Acceleration respects delay")
+check(response.increment(held: 1, fine: false) > 0.02, "Held keys accelerate after delay")
+check(abs(response.increment(held: 8, fine: false) - 0.08) < 0.00001, "Acceleration reaches bounded multiplier")
+check(response.increment(held: 8, fine: true) == 0.005, "Fine adjustment never accelerates")
+check(response.adjusted(0.79, key: .volumeUp, held: 5, fine: false) == 0.8, "Custom key respects ceiling")
+check(response.adjusted(0.9, key: .volumeUp, held: 5, fine: false) == 0.9, "Up does not reduce an existing level above ceiling")
+check(response.adjusted(0.01, key: .volumeDown, held: 5, fine: false) == 0, "Accelerated down clamps to zero")
+check(response.adjusted(0.5, key: .mute, held: 5, fine: false) == 0.5, "Mute does not apply volume increments")
+let screen = CGRect(x: -1600, y: 80, width: 1600, height: 900)
+let hudSize = CGSize(width: 66, height: 218)
+for anchor in HUDAnchor.allCases {
+    let frame = hudFrame(in: screen, size: hudSize, anchor: anchor, margin: 32, offsetX: 0, offsetY: 0)
+    check(screen.contains(frame), "HUD fits at anchor \(anchor)")
+    let shifted = hudFrame(in: screen, size: hudSize, anchor: anchor, margin: 32, offsetX: 10000, offsetY: -10000)
+    check(screen.contains(shifted), "Large offsets stay in display at \(anchor)")
+}
+let left = hudFrame(in: screen, size: hudSize, anchor: .left, margin: 32, offsetX: 0, offsetY: 0)
+let right = hudFrame(in: screen, size: hudSize, anchor: .right, margin: 32, offsetX: 0, offsetY: 0)
+check(left.minX == screen.minX + 32 && right.maxX == screen.maxX - 32, "iPhone left and right match edge spacing")
+check(left.midY == screen.midY && right.midY == screen.midY, "iPhone side HUDs center vertically")
+print("TOTAL: \(count) checks passed.")
